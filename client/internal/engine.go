@@ -646,8 +646,13 @@ func (e *Engine) Start(netbirdConfig *mgmProto.NetbirdConfig, mgmtURL *url.URL) 
 		e.portForwardManager.Start(e.ctx, uint16(e.config.WgPort))
 	}()
 
-	// Set the WireGuard interface for rosenpass after interface is up
+	// Set the WireGuard interface for rosenpass after interface is up.
+	// Provide the firewall first so the deferred in-stack bind can register the
+	// inbound UDP netstack service (#662 phase 2).
 	if e.rpManager != nil {
+		if reg, ok := e.firewall.(rosenpass.NetstackRegistrar); ok {
+			e.rpManager.SetFirewall(reg)
+		}
 		e.rpManager.SetInterface(e.wgInterface)
 	}
 

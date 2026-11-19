@@ -14,8 +14,19 @@ import (
 
 	rp "cunicu.li/go-rosenpass"
 	log "github.com/sirupsen/logrus"
+	"golang.zx2c4.com/wireguard/tun/netstack"
 	"golang.zx2c4.com/wireguard/wgctrl/wgtypes"
+
+	nftypes "github.com/netbirdio/netbird/client/internal/netflow/types"
 )
+
+// NetstackRegistrar is the firewall subset needed to route inbound Rosenpass
+// packets to an in-stack listener (implemented by uspfilter.Manager). Mirrors
+// the dnsfwd netstack-service registration (#662 phase 2).
+type NetstackRegistrar interface {
+	RegisterNetstackService(protocol nftypes.Protocol, port uint16)
+	UnregisterNetstackService(protocol nftypes.Protocol, port uint16)
+}
 
 const (
 	defaultLog         = slog.LevelInfo
@@ -50,6 +61,15 @@ type Manager struct {
 	lock         sync.Mutex
 	port         int
 	wgIface      PresharedKeySetter
+
+	// #662 phase 2: in netstack mode the Rosenpass UDP transport must bind
+	// inside gvisor netstack (not on the host) so android-initiated handshakes
+	// reach the peer overlay IP. The bind is deferred to interface-up because
+	// Run() executes before the WireGuard interface (and its GetNet()) exists.
+	fw             NetstackRegistrar
+	pendingCfg     *rp.Config
+	rpConn         rp.Conn
+	registeredPort int
 }
 
 // NewManager creates a new Rosenpass manager. localWgKey is the local
@@ -222,38 +242,121 @@ func (m *Manager) OnDisconnected(peerKey string) {
 	delete(m.rpPeerIDs, peerKey)
 }
 
-// Run starts the Rosenpass server
+// Run configures the Rosenpass server. The socket bind is deferred to
+// SetInterface (interface-up): in netstack mode the transport must bind inside
+// gvisor netstack via wgIface.GetNet(), which does not exist yet at Run() time
+// (the engine calls Run before wgInterfaceCreate/Up). If the interface was
+// already set, start immediately. (#662 phase 2)
 func (m *Manager) Run() error {
 	conf, err := m.generateConfig()
 	if err != nil {
 		return err
 	}
 
-	server, err := rp.NewUDPServer(conf)
+	m.lock.Lock()
+	iface := m.wgIface
+	if iface == nil {
+		m.pendingCfg = &conf
+	}
+	m.lock.Unlock()
+
+	if iface != nil {
+		return m.startServer(&conf, iface)
+	}
+
+	log.Infof("rosenpass configured on port %d; bind deferred to interface-up", m.port)
+	return nil
+}
+
+// SetFirewall provides the netstack-service registrar (the engine's firewall).
+// Call before SetInterface so the in-stack bind can register inbound routing.
+func (m *Manager) SetFirewall(fw NetstackRegistrar) {
+	m.lock.Lock()
+	defer m.lock.Unlock()
+	m.fw = fw
+}
+
+// startServer binds the Rosenpass transport and starts the server. In netstack
+// mode (iface.GetNet() != nil) it binds an in-stack gonet.UDPConn through the
+// go-rosenpass socket-injection hook and registers the inbound UDP service so
+// both initiation directions route through the tunnel overlay. Otherwise it
+// binds a host socket (original behaviour). (#662 phase 2)
+func (m *Manager) startServer(cfg *rp.Config, iface PresharedKeySetter) error {
+	var nsnet *netstack.Net
+	if ni, ok := iface.(interface{ GetNet() *netstack.Net }); ok {
+		nsnet = ni.GetNet()
+	}
+
+	var conn rp.Conn
+	if nsnet != nil {
+		udpConn, err := rp.NewUDPConnWithListenFunc(cfg.ListenAddrs, func(_ string, addr *net.UDPAddr) (net.PacketConn, error) {
+			return nsnet.ListenUDP(addr)
+		})
+		if err != nil {
+			return fmt.Errorf("create in-stack rosenpass conn: %w", err)
+		}
+		conn = udpConn
+	} else {
+		udpConn, err := rp.NewUDPConn(cfg.ListenAddrs)
+		if err != nil {
+			return fmt.Errorf("create rosenpass conn: %w", err)
+		}
+		conn = udpConn
+	}
+
+	cfg.Conn = conn
+	server, err := rp.NewServer(*cfg)
 	if err != nil {
-		return err
+		_ = conn.Close()
+		return fmt.Errorf("create rosenpass server: %w", err)
 	}
 
 	m.lock.Lock()
 	m.server = server
+	m.rpConn = conn
+	fw := m.fw
 	m.lock.Unlock()
 
-	log.Infof("starting rosenpass server on port %d", m.port)
+	if nsnet != nil && fw != nil {
+		fw.RegisterNetstackService(nftypes.UDP, uint16(m.port))
+		m.lock.Lock()
+		m.registeredPort = m.port
+		m.lock.Unlock()
+		log.Infof("starting rosenpass server in-stack on UDP:%d (netstack)", m.port)
+	} else {
+		log.Infof("starting rosenpass server on host port %d", m.port)
+	}
 
 	return server.Run()
 }
 
-// Close closes the Rosenpass server
+// Close closes the Rosenpass server and its transport socket.
 func (m *Manager) Close() error {
 	m.lock.Lock()
 	server := m.server
 	m.server = nil
+	conn := m.rpConn
+	m.rpConn = nil
+	fw := m.fw
+	regPort := m.registeredPort
+	m.registeredPort = 0
+	m.pendingCfg = nil
 	m.lock.Unlock()
-	if server == nil {
-		return nil
+
+	if fw != nil && regPort != 0 {
+		fw.UnregisterNetstackService(nftypes.UDP, uint16(regPort))
 	}
-	if err := server.Close(); err != nil {
-		log.Errorf("failed closing local rosenpass server: %v", err)
+	if server != nil {
+		if err := server.Close(); err != nil {
+			log.Errorf("failed closing local rosenpass server: %v", err)
+		}
+	}
+	// cfg.Conn is supplied externally, so rp.Server.Close() (closeConn=false)
+	// does not close it; close the transport socket here. (#662 phase 2)
+	if conn != nil {
+		if err := conn.Close(); err != nil {
+			log.Errorf("failed closing rosenpass transport: %v", err)
+		}
 	}
 	return nil
 }
@@ -264,11 +367,20 @@ func (m *Manager) Close() error {
 // already running.
 func (m *Manager) SetInterface(iface PresharedKeySetter) {
 	m.lock.Lock()
-	defer m.lock.Unlock()
-
 	m.wgIface = iface
 	if m.rpWgHandler != nil {
 		m.rpWgHandler.SetInterface(iface)
+	}
+	pending := m.pendingCfg
+	m.pendingCfg = nil
+	m.lock.Unlock()
+
+	// Interface is up now (GetNet available in netstack mode): perform the
+	// deferred Rosenpass bind. (#662 phase 2)
+	if pending != nil {
+		if err := m.startServer(pending, iface); err != nil {
+			log.Errorf("failed to start rosenpass server at interface-up: %v", err)
+		}
 	}
 }
 
