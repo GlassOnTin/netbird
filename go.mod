@@ -105,12 +105,12 @@ require (
 	github.com/shirou/gopsutil/v4 v4.25.8
 	github.com/skratchdot/open-golang v0.0.0-20200116055534-eef842397966
 	github.com/songgao/water v0.0.0-20200317203138-2b4b6d7c09d8
-	github.com/stretchr/testify v1.11.1
+	github.com/stretchr/testify v1.12.1
 	github.com/testcontainers/testcontainers-go v0.37.0
 	github.com/testcontainers/testcontainers-go/modules/mysql v0.37.0
 	github.com/testcontainers/testcontainers-go/modules/postgres v0.37.0
 	github.com/testcontainers/testcontainers-go/modules/redis v0.37.0
-	github.com/things-go/go-socks5 v0.0.4
+	github.com/things-go/go-socks5 v0.1.4
 	github.com/ti-mo/conntrack v0.5.1
 	github.com/ti-mo/netfilter v0.5.2
 	github.com/vmihailenco/msgpack/v5 v5.4.1
@@ -287,7 +287,6 @@ require (
 	github.com/pion/transport/v2 v2.2.4 // indirect
 	github.com/pion/turn/v4 v4.1.1 // indirect
 	github.com/pkg/errors v0.9.1 // indirect
-	github.com/pmezard/go-difflib v1.0.1-0.20181226105442-5d4384ee4fb2 // indirect
 	github.com/power-devops/perfstat v0.0.0-20240221224432-82ca36839d55 // indirect
 	github.com/pquerna/otp v1.5.0 // indirect
 	github.com/prometheus/client_model v0.6.2 // indirect
@@ -298,7 +297,7 @@ require (
 	github.com/ryanuber/go-glob v1.0.0 // indirect
 	github.com/shopspring/decimal v1.4.0 // indirect
 	github.com/spf13/cast v1.10.0 // indirect
-	github.com/stretchr/objx v0.5.2 // indirect
+	github.com/stretchr/objx v0.5.3 // indirect
 	github.com/tinylib/msgp v1.6.3 // indirect
 	github.com/tklauser/go-sysconf v0.3.15 // indirect
 	github.com/tklauser/numcpus v0.10.0 // indirect
@@ -314,6 +313,7 @@ require (
 	go.opentelemetry.io/otel/trace v1.43.0 // indirect
 	go.uber.org/multierr v1.11.0 // indirect
 	go.yaml.in/yaml/v2 v2.4.3 // indirect
+	go.yaml.in/yaml/v3 v3.0.5 // indirect
 	golang.org/x/text v0.40.0 // indirect
 	golang.org/x/tools v0.47.0 // indirect
 	golang.zx2c4.com/wintun v0.0.0-20230126152724-0fa3db229ce2 // indirect
