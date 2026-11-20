@@ -339,3 +339,5 @@ replace github.com/dexidp/dex => github.com/netbirdio/dex v0.244.1-0.20260716205
 replace github.com/dexidp/dex/api/v2 => github.com/netbirdio/dex/api/v2 v2.0.0-20260512110716-8d70ad8647c1
 
 replace github.com/mailru/easyjson => github.com/netbirdio/easyjson v0.9.0
+
+replace cunicu.li/go-rosenpass => github.com/GlassOnTin/go-rosenpass v0.0.0-20261119213733-a4759ecf1451
