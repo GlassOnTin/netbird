@@ -10,6 +10,7 @@ import (
 	"net/netip"
 	"os"
 	"sync"
+	"time"
 
 	"github.com/sirupsen/logrus"
 	wgdevice "golang.zx2c4.com/wireguard/device"
@@ -53,6 +54,12 @@ type Client struct {
 	jwtToken   string
 	connect    *internal.ConnectClient
 	recorder   *peer.Status
+
+	// SSH JWT (OIDC device flow) state, guarded by sshMu (#875).
+	sshMu        sync.Mutex
+	sshAuth      sshAuthState
+	sshJWT       string
+	sshJWTExpiry time.Time
 }
 
 // Options configures a new Client.
